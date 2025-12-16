@@ -11,10 +11,6 @@ import (
 
 const duration = 2 * time.Second
 
-// This scenario is for long running processes that you want to close together should one exit, for example a worker
-// and some health server, if the worker closes regardless of whether an error is present, we likely don't want to keep
-// the health server still running. Given we pass in a parent context, if it is canceled for any reason all goroutines
-// are expected to respect it and exit and thus trigger the closure process as well.
 func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), duration)
 
@@ -23,11 +19,11 @@ func main() {
 	n := nursery.New(
 		nursery.WithContext(ctx),
 		nursery.WithWaitForContext(false),
-		nursery.WithCloseOnCompletion(true),
+		nursery.WithCloseOnCompletion(false),
 		nursery.WithCloseOnError(true),
 	)
 
-	n.AddTaskFunc(longJob, shortJob)
+	n.AddTaskFunc(nursery.Recovery(f))
 
 	err := n.Wait()
 	if ShouldPanic(err) {
@@ -37,34 +33,8 @@ func main() {
 	log.Println("All jobs done...")
 }
 
-func shortJob(ctx context.Context) error {
-	timer := time.After(duration / 2)
-
-	for {
-		select {
-		case <-timer:
-			log.Println("job done...")
-			return nil
-		case <-ctx.Done():
-			log.Println("context closed...")
-			return nil
-		}
-	}
-}
-
-func longJob(ctx context.Context) error {
-	timer := time.After(duration * 2)
-
-	for {
-		select {
-		case <-timer:
-			log.Println("job done...")
-			return nil
-		case <-ctx.Done():
-			log.Println("context closed...")
-			return nil
-		}
-	}
+func f(_ context.Context) error {
+	panic("oops")
 }
 
 func ShouldPanic(err error) bool {
@@ -74,9 +44,12 @@ func ShouldPanic(err error) bool {
 	)
 
 	switch {
+	case errors.Is(err, &nursery.ErrPanic{}):
+		message = "panic occurred..."
+		shouldPanic = false
 	case errors.Is(err, nursery.CompletionError):
 		message = "completed..."
-		shouldPanic = false
+		shouldPanic = true
 	case errors.Is(err, context.DeadlineExceeded):
 		message = "deadline exceeded..."
 		shouldPanic = true
