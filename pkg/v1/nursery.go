@@ -26,6 +26,7 @@ type Nursery struct {
 	// configuration
 	closeOnFirstCompletion bool
 	waitForContext         bool
+	closeOnError           bool
 	limit                  int
 }
 
@@ -53,6 +54,8 @@ func New(options ...Option) *Nursery {
 	return n
 }
 
+// AddTask adds the given tasks to the nursery, spawning a goroutine for each given task. If the nursery is closed,
+// this becomes a no-op.
 func (n *Nursery) AddTask(tasks ...Task) {
 	for _, task := range tasks {
 		select {
@@ -67,6 +70,8 @@ func (n *Nursery) AddTask(tasks ...Task) {
 	}
 }
 
+// AddTaskFunc adds the given task functions to the nursery, spawning a goroutine for each given task. If the nursery
+// is closed, this becomes a no-op.
 func (n *Nursery) AddTaskFunc(tasks ...TaskFunc) {
 	for _, task := range tasks {
 		select {
@@ -81,10 +86,15 @@ func (n *Nursery) AddTaskFunc(tasks ...TaskFunc) {
 	}
 }
 
+// Err returns the error associated with the closure of the nursery managed goroutines.
 func (n *Nursery) Err() error {
 	return context.Cause(n.context)
 }
 
+// Wait blocks until the nursery completes, the trigger of what closes the nursery and its tracked goroutines depends
+// on configuration and could include a number of things, from the first goroutines returning period, the first
+// goroutine returning an error, the closure of a provided `context.Context`, or all goroutines returning from doing
+// some quick work.
 func (n *Nursery) Wait() error {
 	select {
 	case <-n.context.Done():
@@ -101,10 +111,13 @@ func (n *Nursery) Wait() error {
 	return context.Cause(n.context)
 }
 
+// Active returns the number of active goroutines "tracked" by this specific nursery.
 func (n *Nursery) Active() int {
 	return int(n.counter.Load())
 }
 
+// Close triggers the closure of all managed goroutines through `context.Context` provided the managed goroutines
+// respect context closure.
 func (n *Nursery) Close() {
 	n.cancel(CloseError)
 }
@@ -115,9 +128,9 @@ func (n *Nursery) add(task TaskFunc) {
 		case <-n.context.Done():
 			return
 		case n.pool <- token{}:
-			// We never close pool because of this case, select does not respect order of options, so even if
-			// context is closed, we are not guaranteed to not try sending a token, once nursery is cleaned up the
-			// channel is, so no leaks should occur even if we never close it.
+			// We never close the pool because select does not respect order of options, so even if context is closed,
+			// we are not guaranteed to not try sending a token, once nursery is cleaned up the channel is, so no leaks
+			// should occur even if we never close it.
 		}
 	}
 
@@ -148,7 +161,8 @@ func (n *Nursery) done() {
 func (n *Nursery) run(task TaskFunc) {
 	defer n.done()
 
-	if err := task(n.context); err != nil {
+	err := task(n.context)
+	if n.closeOnError && err != nil {
 		// We only care about the first error, while you could potentially aggregate errors, you could potentially end
 		// up with several that wrap the context closure error, and in most use cases that I've seen, we only care about
 		// the triggering error.

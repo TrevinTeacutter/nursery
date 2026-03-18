@@ -5,7 +5,6 @@ import "context"
 type Option func(*Nursery)
 
 func WithContext(value context.Context) Option {
-
 	return func(n *Nursery) {
 		n.context = value
 	}
@@ -23,8 +22,23 @@ func WithWaitForContext(value bool) Option {
 	}
 }
 
+// WithWaitForCompletion
+//
+// deprecated: use WithCloseOnCompletion instead
 func WithWaitForCompletion(value bool) Option {
 	return func(n *Nursery) {
 		n.closeOnFirstCompletion = value
+	}
+}
+
+func WithCloseOnCompletion(value bool) Option {
+	return func(n *Nursery) {
+		n.closeOnFirstCompletion = value
+	}
+}
+
+func WithCloseOnError(value bool) Option {
+	return func(n *Nursery) {
+		n.closeOnError = value
 	}
 }
